@@ -1,6 +1,11 @@
-from openai import OpenAI
-import config
+from config import client  # import the shared client
 
-# Initialize the client with your API key
-# (better practice: store your API key in an environment variable, not directly in code)
-print("hey")
+response = client.chat.completions.create(
+    model="gpt-4.1-mini",
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Write me a haiku about microservices."}
+    ]
+)
+
+print(response.choices[0].message.content)
