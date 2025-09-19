@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "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")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 EMAIL_TO = os.getenv("EMAIL_TO", "eng0130@gmail.com")
 # EMAIL_FROM = os.getenv("EMAIL_FROM", "bot@example.com")
 # SMTP_HOST = os.getenv("SMTP_HOST", "")
