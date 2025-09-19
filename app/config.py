@@ -1,8 +1,20 @@
 import os
 from dotenv import load_dotenv
-load_dotenv()
+from pathlib import Path
+from openai import OpenAI
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# Go up one level from app/ to root/
+env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
+
+# Get API key from environment
+api_key = os.getenv("OPENAI_API_KEY")
+
+# Create reusable OpenAI client
+client = OpenAI(api_key=api_key)
+
+
+# Other configuration variables
 EMAIL_TO = os.getenv("EMAIL_TO", "eng0130@gmail.com")
 # EMAIL_FROM = os.getenv("EMAIL_FROM", "bot@example.com")
 # SMTP_HOST = os.getenv("SMTP_HOST", "")
