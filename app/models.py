@@ -1,20 +1,20 @@
-# from typing import Optional, List
-# from sqlmodel import SQLModel, Field, Column, JSON
-# from datetime import datetime
+from typing import Optional, List
+from sqlmodel import SQLModel, Field, Column, JSON
+from datetime import datetime
 
-# class Article(SQLModel, table=True):
-#     id: Optional[int] = Field(default=None, primary_key=True)
-#     url: str
-#     title: str
-#     content: Optional[str] = ""
-#     published_at: Optional[datetime] = None
-#     source: Optional[str] = ""
-#     topics: List[str] = Field(default_factory=list, sa_column=Column(JSON))
+class Article(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    url: str
+    title: str
+    content: Optional[str] = ""
+    published_at: Optional[datetime] = None
+    source: Optional[str] = ""
+    topics: List[str] = Field(default_factory=list, sa_column=Column(JSON))
 
-# class DailyIssue(SQLModel, table=True):
-#     id: Optional[int] = Field(default=None, primary_key=True)
-#     date: str  # YYYY-MM-DD
-#     items_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+class DailyIssue(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    date: str  # YYYY-MM-DD
+    items_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
 
 # class Feedback(SQLModel, table=True):
 #     id: Optional[int] = Field(default=None, primary_key=True)
