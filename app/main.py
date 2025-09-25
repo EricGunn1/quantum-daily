@@ -6,6 +6,7 @@ from .store import init_db, get_session
 from .models import DailyIssue, Feedback, UserPrefs
 from .schema import FeedbackIn, PrefsIn
 from .ranker import apply_feedback
+from apscheduler.schedulers.background import BackgroundScheduler
 from .scheduler import start_scheduler
 from .workflow import run_daily
 from app.config import client
@@ -13,6 +14,7 @@ from pathlib import Path
 
 app = FastAPI(title="Quantum Daily", version="0.1.0")
 
+Path("static").mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -23,7 +25,9 @@ def favicon():
 @app.on_event("startup")
 def _startup():
     init_db()
-    start_scheduler()
+    if not getattr(app.state, "scheduler_started", False):
+        start_scheduler()
+        app.state.scheduler_started = True
 
 @app.get("/health")
 def health():
