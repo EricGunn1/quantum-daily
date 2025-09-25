@@ -1,23 +1,31 @@
 from typing import List, Dict
-from openai import OpenAI
 from .config import OPENAI_API_KEY
+from openai import OpenAI
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-SYS = "You write 2-3 sentence, concrete news summaries. No fluff."
+SYS_PROMPT = """You are a concise news summarizer. Output 2-4 sentences.
+Label each item as 'industry' or 'tech' based on commercial vs. research/engineering focus.
+Be concrete. Avoid hype. Include specific companies/partners/funding/products if present.
+"""
 
 def summarize_items(items: List[Dict]) -> List[Dict]:
-    # Summarize each item individually; simple and robust.
+    if not client:
+        # Dev fallback without LLM
+        for it in items:
+            it["summary"] = (it.get("content") or it["title"])[:280]
+            it["category"] = "industry" if "partner" in (it["title"]+it.get("content","")).lower() else "tech"
+        return items
+
     for it in items:
-        prompt = f"Title: {it['title']}\nSource: {it['source']}\nText: {it.get('content','')[:1500]}"
+        content = f"Title: {it['title']}\nSource: {it['source']}\nText: {it.get('content','')[:4000]}"
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role":"system","content":SYS},
-                      {"role":"user","content":prompt}],
-            temperature=0.2,
+            messages=[{"role":"system","content":SYS_PROMPT},
+                      {"role":"user","content":content}],
+            temperature=0.2
         )
-        it["summary"] = resp.choices[0].message.content.strip()
-        # rough tag (we'll improve later)
-        t = (it["title"] + " " + it.get("content","")).lower()
-        it["category"] = "industry" if any(k in t for k in ["partnership","funding","deal","acquisition","launch"]) else "tech"
+        txt = resp.choices[0].message.content.strip()
+        it["summary"] = txt
+        # naive tag—could parse from model output; we also have classifier in ranker
     return items
