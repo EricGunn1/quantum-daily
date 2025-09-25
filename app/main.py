@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import select
 from .store import init_db, get_session
@@ -9,10 +9,16 @@ from .ranker import apply_feedback
 from .scheduler import start_scheduler
 from .workflow import run_daily
 from app.config import client
+from pathlib import Path
 
 app = FastAPI(title="Quantum Daily", version="0.1.0")
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    path = Path("static/favicon.ico")
+    return FileResponse(path) if path.exists() else {}
 
 @app.on_event("startup")
 def _startup():
