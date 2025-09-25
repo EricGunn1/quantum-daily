@@ -1,42 +1,64 @@
-# app/main.py
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+from sqlmodel import select
+from .store import init_db, get_session
+from .models import DailyIssue, Feedback, UserPrefs
+from .schema import FeedbackIn, PrefsIn
+from .ranker import apply_feedback
+from .scheduler import start_scheduler
+from .workflow import run_daily
 
-from .store import init_db
-# If you haven't wired the scheduler yet, you can omit these:
-# from .scheduler import start_scheduler, stop_scheduler
+app = FastAPI(title="Quantum Daily", version="0.1.0")
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # ---- STARTUP SECTION ----
-    # Create any missing tables before serving requests
+@app.on_event("startup")
+def _startup():
     init_db()
+    start_scheduler()
 
-    # Start background jobs (optional)
-    # try:
-        # start_scheduler()  # guarded to avoid starting twice
-    # except Exception as e:
-        # Don’t crash the app if the scheduler fails; log and continue
-        # print(f"[lifespan] scheduler start failed: {e}")
-
-    # Hand control back to FastAPI to serve requests
-    yield
-
-    # ---- SHUTDOWN SECTION ----
-    # Stop background jobs (optional)
-    # try:
-    #     stop_scheduler()
-    # except Exception as e:
-    #     print(f"[lifespan] scheduler stop failed: {e}")
-
-# Pass the lifespan handler to the app
-app = FastAPI(
-    title="Quantum Daily",
-    version="0.0.3",
-    lifespan=lifespan,
-)
-
-# --- routes as usual ---
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status":"ok"}
+
+@app.get("/summary/today")
+def get_today():
+    from datetime import datetime
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    with get_session() as s:
+        issue = s.exec(select(DailyIssue).where(DailyIssue.date==today)).first()
+        if not issue:
+            # generate on demand if missing
+            issue_json = run_daily()
+            return JSONResponse(issue_json)
+        return JSONResponse(issue.items_json)
+
+@app.post("/run-once")
+def run_once():
+    return JSONResponse(run_daily())
+
+@app.post("/feedback")
+def post_feedback(body: FeedbackIn):
+    with get_session() as s:
+        s.add(Feedback(article_id=body.article_id, signal=body.signal, aspect=body.aspect))
+        s.commit()
+        # apply immediately to prefs
+        prefs = s.exec(select(UserPrefs)).first()
+        prefs = apply_feedback(prefs, [body])
+        s.add(prefs); s.commit()
+    return {"ok": True}
+
+@app.post("/prefs")
+def update_prefs(body: PrefsIn):
+    with get_session() as s:
+        prefs = s.exec(select(UserPrefs)).first()
+        if not prefs:
+            prefs = UserPrefs()
+        if body.industry_weight is not None and body.tech_weight is not None:
+            total = max(1e-6, body.industry_weight + body.tech_weight)
+            prefs.industry_weight = body.industry_weight/total
+            prefs.tech_weight = body.tech_weight/total
+        if body.email is not None:
+            prefs.email = body.email
+        if body.send_hour_local is not None:
+            prefs.send_hour_local = int(body.send_hour_local)
+        s.add(prefs); s.commit()
+    return {"ok": True}
