@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlmodel import select
 from .store import init_db, get_session
 from .models import DailyIssue, Feedback, UserPrefs
@@ -7,8 +8,11 @@ from .schema import FeedbackIn, PrefsIn
 from .ranker import apply_feedback
 from .scheduler import start_scheduler
 from .workflow import run_daily
+from app.config import client
 
 app = FastAPI(title="Quantum Daily", version="0.1.0")
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.on_event("startup")
 def _startup():
@@ -62,3 +66,7 @@ def update_prefs(body: PrefsIn):
             prefs.send_hour_local = int(body.send_hour_local)
         s.add(prefs); s.commit()
     return {"ok": True}
+
+@app.get("/")
+def read_root():
+    return {"status": "ok", "message": "Welcome to Quantum Daily API"}
