@@ -1,5 +1,5 @@
 from typing import List, Dict
-from .config import OPENAI_API_KEY
+from app.config import client as OPENAI_API_KEY
 from openai import OpenAI
 
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
