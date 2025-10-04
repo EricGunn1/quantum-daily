@@ -4,6 +4,7 @@ from ..store import get_session
 from ..models import Feedback, UserPrefs
 from ..schema import FeedbackIn
 from ..ranker import apply_feedback
+from sqlmodel import select
 
 logger = get_logger("quantum_daily.routes.feedback")
 

@@ -1,6 +1,6 @@
 # app/main.py
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
@@ -30,6 +30,11 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 def favicon():
     path = Path("static/favicon.ico")
     return FileResponse(path) if path.exists() else {}
+
+@app.get("/", include_in_schema=False)
+def root():
+    # Use 307 so GET stays a GET
+    return RedirectResponse(url="/summary/today.html", status_code=307)
 
 # Include routers
 app.include_router(health.router)
