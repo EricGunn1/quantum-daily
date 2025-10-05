@@ -23,3 +23,6 @@ openai==1.51.0
 
 # Optional but recommended for date/time handling
 pytz==2024.2
+
+# PDF generation
+playwright>=1.47 
