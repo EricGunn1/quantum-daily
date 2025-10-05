@@ -16,6 +16,16 @@ from .lifespan import lifespan
 
 from .routers import health, summary, feedback, prefs
 
+# app/main.py
+import sys, asyncio  # add these
+# Use the Proactor policy on Windows (supports subprocesses required by Playwright)
+if sys.platform.startswith("win"):
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    except Exception:
+        pass
+
+
 setup_logging()  # <-- set up logging ASAP
 logger = get_logger("quantum_daily.main")
 

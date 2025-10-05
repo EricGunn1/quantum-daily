@@ -1,3 +1,4 @@
+# app/render_issue.py
 from __future__ import annotations
 from typing import Dict, Any, List
 from html import escape
@@ -10,6 +11,10 @@ def _domain(u: str) -> str:
         return ""
 
 def render_issue_html(issue: Dict[str, Any]) -> str:
+    """
+    Build a simple, readable HTML page for a daily issue.
+    Expects: {"date": "YYYY-MM-DD", "items": [ {title, url, plain_summary/summary, tldr_bullets?}, ... ]}
+    """
     date = escape(issue.get("date", ""))
     items: List[Dict[str, Any]] = issue.get("items", [])
 
@@ -18,7 +23,7 @@ def render_issue_html(issue: Dict[str, Any]) -> str:
         title = escape(it.get("title", "") or "")
         url = it.get("url", "") or "#"
         domain = escape(_domain(url))
-        # support both your legacy "summary" and the newer "plain_summary"
+        # prefer plain_summary, then legacy summary; fall back to empty
         summary = escape(it.get("plain_summary") or it.get("summary") or "")
         bullets = it.get("tldr_bullets") or []
         bullets_html = "".join(f"<li>{escape(b)}</li>" for b in bullets[:3]) if bullets else ""
@@ -57,3 +62,34 @@ def render_issue_html(issue: Dict[str, Any]) -> str:
   {body}
 </body>
 </html>"""
+
+# --- PDF helpers -------------------------------------------------------------
+
+def html_to_pdf_bytes(html: str, *, format: str = "Letter") -> bytes:
+    import sys, asyncio
+    if sys.platform.startswith("win"):
+        try:
+            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+        except Exception:
+            pass
+
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.set_content(html, wait_until="load")
+        pdf_bytes = page.pdf(
+            format=format,
+            margin={"top": "20mm", "bottom": "20mm", "left": "12mm", "right": "12mm"},
+            print_background=True,
+        )
+        browser.close()
+    return pdf_bytes
+
+
+def render_issue_pdf(issue: Dict[str, Any], *, format: str = "Letter") -> bytes:
+    """
+    Convenience: render the issue to HTML, then to PDF bytes.
+    """
+    html = render_issue_html(issue)
+    return html_to_pdf_bytes(html, format=format)

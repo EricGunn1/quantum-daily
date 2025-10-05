@@ -1,54 +1,80 @@
+# app/routers/summary.py
 from fastapi import APIRouter, Query
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from sqlmodel import select
 from datetime import datetime
+from pathlib import Path
 
 from ..logging_setup import get_logger
 from ..store import get_session
 from ..models import DailyIssue
 from ..workflow import run_daily
-from ..render_issue import render_issue_html
-from ..summarize import summarize_items
+from ..render_issue import render_issue_html, render_issue_pdf
 
 logger = get_logger("quantum_daily.routes.summary")
-
 router = APIRouter(prefix="/summary")
 
+# Anchor PDF path to the repo root so it’s predictable regardless of CWD
+PROJECT_ROOT = Path(__file__).resolve().parents[2]   # <repo>/
+PDF_OUTPUT_PATH = PROJECT_ROOT / "exports" / "QuantumDaily.pdf"
+
+
 @router.get("/today")
-def get_today():
+def get_today(regen: bool = Query(False, description="Force rebuild for today")):
+    """
+    Return today's issue as JSON. Use ?regen=1 to force a fresh build.
+    """
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    logger.info(f"Fetching daily issue for {today}")
+    logger.info(f"Fetching daily issue for {today} (regen={regen})")
     with get_session() as s:
         issue = s.exec(select(DailyIssue).where(DailyIssue.date == today)).first()
-        if not issue:
-            logger.info("No stored issue; generating on-demand")
-            return JSONResponse(run_daily())
-        return JSONResponse(issue.items_json)
+        issue_json = run_daily() if (regen or not issue) else issue.items_json
+    return JSONResponse(issue_json)
 
-@router.post("/run-once", include_in_schema=False)
+
+@router.post("/run-once")
 def run_once():
+    """
+    Trigger a fresh run right now (always rebuilds today).
+    Visible in docs for convenience.
+    """
     logger.info("Manual run_once invoked")
     return JSONResponse(run_daily())
 
+
 @router.get("/today.html", response_class=HTMLResponse)
-def get_today_html(regen: bool = Query(False)):
+def get_today_html(regen: bool = Query(False, description="Force rebuild for today")):
     """
     Render today's issue as HTML.
-    - Generates today's issue if missing or when ?regen=1
-    - If stored items lack summaries, summarizes them on the fly
+    """
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    with get_session() as s:
+        issue = s.exec(select(DailyIssue).where(DailyIssue.date == today)).first()
+        issue_json = run_daily() if (regen or not issue) else issue.items_json
+    return HTMLResponse(render_issue_html(issue_json))
+
+
+@router.get("/today.pdf")
+def get_today_pdf(regen: bool = Query(False, description="Force rebuild & save PDF"), download: bool = Query(True)):
+    """
+    Generate (and save) today's PDF and return it.
+    - Saves/overwrites <repo>/exports/QuantumDaily.pdf on disk every call
+    - Set ?regen=1 to rebuild today’s issue before exporting
+    - Set ?download=false if you only want it saved on disk (response still streams the file)
     """
     today = datetime.utcnow().strftime("%Y-%m-%d")
     with get_session() as s:
         issue = s.exec(select(DailyIssue).where(DailyIssue.date == today)).first()
         issue_json = run_daily() if (regen or not issue) else issue.items_json
 
-        items = issue_json.get("items", [])
-        if any(not (it.get("plain_summary") or it.get("summary")) for it in items):
-            logger.info("Summarizing items missing summaries (HTML path)", extra={"missing": True})
-            issue_json["items"] = summarize_items(items)
+    # Ensure folder exists and write the PDF (always overwrite)
+    PDF_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    pdf_bytes = render_issue_pdf(issue_json)
+    PDF_OUTPUT_PATH.write_bytes(pdf_bytes)
 
-            # (Optional) persist enriched summaries back to DB so future loads are ready-made:
-            # s.add(DailyIssue(date=today, items_json=issue_json))
-            # s.commit()
+    logger.info("PDF_READY", extra={"path": str(PDF_OUTPUT_PATH.resolve()), "size_kb": len(pdf_bytes) // 1024})
 
-    return HTMLResponse(render_issue_html(issue_json))
+    # Stream the file back; iOS Gmail will let you open/share it
+    filename = f"QuantumDaily-{today}.pdf"
+    # If download=false, most browsers will still display inline; Gmail will show it as an attachment either way
+    return FileResponse(PDF_OUTPUT_PATH, media_type="application/pdf", filename=filename)

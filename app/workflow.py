@@ -1,6 +1,10 @@
 # app/workflow.py
 from datetime import datetime
 from typing import Any, Dict, List
+from pathlib import Path
+import uuid
+import time
+from collections import Counter
 
 from sqlmodel import select
 
@@ -9,16 +13,13 @@ from .ranker import classify_industry_vs_tech, composite_score
 from .summarize import summarize_items
 from .models import Article, DailyIssue, UserPrefs
 from .store import get_session
-from .emailer import render_html, send_email
 from .logging_setup import get_logger
-
-import uuid
-import time
-from collections import Counter
+from .render_issue import render_issue_pdf
 
 logger = get_logger("quantum_daily.workflow")
 
 TOP_N = 12  # number of items to include in the daily issue
+PDF_OUTPUT_PATH = Path("exports/QuantumDaily.pdf")  # overwritten on every run
 
 
 def run_daily() -> Dict[str, Any]:
@@ -29,7 +30,7 @@ def run_daily() -> Dict[str, Any]:
     - classify, score, rank
     - summarize
     - persist articles + issue
-    - email HTML
+    - generate and save PDF locally (overwrites)
     """
     run_id = uuid.uuid4().hex[:8]
     date = datetime.utcnow().strftime("%Y-%m-%d")
@@ -56,8 +57,12 @@ def run_daily() -> Dict[str, Any]:
                 logger.info("PREFS_CREATED_DEFAULT", extra=X(step="prefs", handled=True))
             logger.info(
                 "PREFS_READY",
-                extra=X(step="prefs", elapsed_ms=round((time.perf_counter() - t_prefs) * 1000),
-                        email=(prefs.email or "").strip(), send_hour_local=prefs.send_hour_local),
+                extra=X(
+                    step="prefs",
+                    elapsed_ms=round((time.perf_counter() - t_prefs) * 1000),
+                    email=(prefs.email or "").strip(),
+                    send_hour_local=prefs.send_hour_local,
+                ),
             )
 
             # --- Fetch ---
@@ -67,8 +72,12 @@ def run_daily() -> Dict[str, Any]:
                 per_source = Counter([it.get("source", "unknown") for it in raw])
                 logger.info(
                     "FETCH_OK",
-                    extra=X(step="fetch", count=len(raw), per_source=dict(per_source),
-                            elapsed_ms=round((time.perf_counter() - t_fetch) * 1000)),
+                    extra=X(
+                        step="fetch",
+                        count=len(raw),
+                        per_source=dict(per_source),
+                        elapsed_ms=round((time.perf_counter() - t_fetch) * 1000),
+                    ),
                 )
                 if logger.isEnabledFor(10):  # DEBUG
                     sample = [{"title": (it.get("title") or "")[:120], "url": it.get("url", "")} for it in raw[:5]]
@@ -113,12 +122,14 @@ def run_daily() -> Dict[str, Any]:
             cat_dist = Counter([it.get("category", "unknown") for it in scored])
             logger.info(
                 "SCORING_DONE",
-                extra=X(step="score",
-                        count=len(scored),
-                        category_dist=dict(cat_dist),
-                        classify_errors=classify_errors,
-                        score_errors=score_errors,
-                        elapsed_ms=round((time.perf_counter() - t_score) * 1000)),
+                extra=X(
+                    step="score",
+                    count=len(scored),
+                    category_dist=dict(cat_dist),
+                    classify_errors=classify_errors,
+                    score_errors=score_errors,
+                    elapsed_ms=round((time.perf_counter() - t_score) * 1000),
+                ),
             )
 
             # --- Select Top N ---
@@ -127,13 +138,19 @@ def run_daily() -> Dict[str, Any]:
             top_scores = [round(it.get("score", 0.0), 4) for it in top[:5]]
             logger.info(
                 "RANKING_DONE",
-                extra=X(step="rank", selected=len(top), top_n=TOP_N, top5_scores=top_scores,
-                        elapsed_ms=round((time.perf_counter() - t_rank) * 1000)),
+                extra=X(
+                    step="rank",
+                    selected=len(top),
+                    top_n=TOP_N,
+                    top5_scores=top_scores,
+                    elapsed_ms=round((time.perf_counter() - t_rank) * 1000),
+                ),
             )
             if logger.isEnabledFor(10) and top:  # DEBUG
-                sample = [{"score": round(it.get("score", 0.0), 4),
-                           "title": (it.get("title") or "")[:120],
-                           "url": it.get("url", "")} for it in top[:3]]
+                sample = [
+                    {"score": round(it.get("score", 0.0), 4), "title": (it.get("title") or "")[:120], "url": it.get("url", "")}
+                    for it in top[:3]
+                ]
                 logger.debug("RANK_SAMPLE", extra=X(step="rank", sample=sample))
 
             # --- Summarize ---
@@ -145,8 +162,12 @@ def run_daily() -> Dict[str, Any]:
                 missing_plain = sum(1 for it in top if not it.get("summary"))
                 logger.info(
                     "SUMMARY_OK",
-                    extra=X(step="summary", count=len(top), missing_summary=missing_plain,
-                            elapsed_ms=round((time.perf_counter() - t_summary) * 1000)),
+                    extra=X(
+                        step="summary",
+                        count=len(top),
+                        missing_summary=missing_plain,
+                        elapsed_ms=round((time.perf_counter() - t_summary) * 1000),
+                    ),
                 )
             except Exception as e:
                 summary_errors += 1
@@ -181,10 +202,12 @@ def run_daily() -> Dict[str, Any]:
 
             logger.info(
                 "ARTICLES_PERSISTED",
-                extra=X(step="persist_articles",
-                        count=len(persisted_ids),
-                        errors=persist_errors,
-                        elapsed_ms=round((time.perf_counter() - t_persist_articles) * 1000)),
+                extra=X(
+                    step="persist_articles",
+                    count=len(persisted_ids),
+                    errors=persist_errors,
+                    elapsed_ms=round((time.perf_counter() - t_persist_articles) * 1000),
+                ),
             )
 
             # --- Persist Issue ---
@@ -197,62 +220,63 @@ def run_daily() -> Dict[str, Any]:
                 s.commit()
                 logger.info(
                     "ISSUE_PERSISTED",
-                    extra=X(step="persist_issue", date=date, items=len(issue_items),
-                            elapsed_ms=round((time.perf_counter() - t_issue) * 1000)),
+                    extra=X(
+                        step="persist_issue",
+                        date=date,
+                        items=len(issue_items),
+                        elapsed_ms=round((time.perf_counter() - t_issue) * 1000),
+                    ),
                 )
             except Exception as e:
                 logger.exception("PERSIST_ISSUE_FAILED", extra=X(step="persist_issue", handled=True, date=date, error=type(e).__name__))
 
-            # --- Render Email ---
-            t_email_render = time.perf_counter()
-            html = None
+            # --- Generate & Save PDF (overwrite each run) ---
+            t_pdf = time.perf_counter()
             try:
-                html = render_html(date, issue_items)
-                logger.debug(
-                    "EMAIL_RENDER_OK",
-                    extra=X(step="email_render", length=len(html) if html else 0,
-                            elapsed_ms=round((time.perf_counter() - t_email_render) * 1000)),
+                # ensure output folder exists
+                PDF_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+                pdf_bytes = render_issue_pdf(issue_json)
+                PDF_OUTPUT_PATH.write_bytes(pdf_bytes)  # overwrite
+                logger.info(
+                    "PDF_SAVED",
+                    extra=X(
+                        step="pdf_save",
+                        path=str(PDF_OUTPUT_PATH.resolve()),
+                        size_kb=len(pdf_bytes) // 1024,
+                        elapsed_ms=round((time.perf_counter() - t_pdf) * 1000),
+                    ),
                 )
             except Exception as e:
-                logger.exception("EMAIL_RENDER_FAILED", extra=X(step="email_render", handled=True, date=date, error=type(e).__name__))
-
-            # --- Send Email ---
-            t_email_send = time.perf_counter()
-            if html:
-                try:
-                    to_addr = (prefs.email or "").strip()
-                    send_email(f"Quantum Daily — {date}", html)
-                    logger.info(
-                        "EMAIL_SENT",
-                        extra=X(step="email_send", handled=True, prefs_email=to_addr,
-                                elapsed_ms=round((time.perf_counter() - t_email_send) * 1000)),
-                    )
-                except Exception as e:
-                    logger.exception("EMAIL_FAILED", extra=X(step="email_send", handled=True, prefs_email=(prefs.email or "").strip(), error=type(e).__name__))
-            else:
-                logger.info("EMAIL_SKIPPED", extra=X(step="email_send", handled=True, reason="no_html"))
+                logger.exception("PDF_SAVE_FAILED", extra=X(step="pdf_save", handled=True, error=type(e).__name__))
 
             logger.info(
                 "RUN_DAILY_SUCCESS",
-                extra=X(step="end",
-                        handled=True,
-                        total_elapsed_ms=round((time.perf_counter() - t0) * 1000),
-                        metrics={
-                            "fetch_count": len(raw),
-                            "classify_errors": classify_errors,
-                            "score_errors": score_errors,
-                            "summary_errors": summary_errors,
-                            "persist_article_errors": persist_errors,
-                            "persisted_articles": len(persisted_ids),
-                            "issue_items": len(issue_items),
-                        }),
+                extra=X(
+                    step="end",
+                    handled=True,
+                    total_elapsed_ms=round((time.perf_counter() - t0) * 1000),
+                    metrics={
+                        "fetch_count": len(raw),
+                        "classify_errors": classify_errors,
+                        "score_errors": score_errors,
+                        "summary_errors": summary_errors,
+                        "persist_article_errors": persist_errors,
+                        "persisted_articles": len(persisted_ids),
+                        "issue_items": len(issue_items),
+                        "pdf_path": str(PDF_OUTPUT_PATH.resolve()),
+                    },
+                ),
             )
             return issue_json
 
     except Exception as e:
         logger.exception(
             "RUN_DAILY_FATAL",
-            extra=X(step="fatal", handled=False, error=type(e).__name__,
-                    total_elapsed_ms=round((time.perf_counter() - t0) * 1000)),
+            extra=X(
+                step="fatal",
+                handled=False,
+                error=type(e).__name__,
+                total_elapsed_ms=round((time.perf_counter() - t0) * 1000),
+            ),
         )
         raise
