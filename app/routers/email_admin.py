@@ -1,4 +1,5 @@
 # app/routers/email_admin.py
+from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
 import os
 from app.emailer import send_email
@@ -6,7 +7,7 @@ from app.emailer import send_email
 router = APIRouter(prefix="/admin/email", tags=["Admin Email"])
 
 # --- Simple API key gate (replace with real auth later if needed) ---
-def require_admin(x_api_key: str | None = Header(default=None)) -> None:
+def require_admin(x_api_key: Optional[str] = Header(default=None)) -> None:
     expected = os.getenv("ADMIN_API_KEY", "")
     if not expected:
         # Fail closed if you forgot to set the key

@@ -16,6 +16,10 @@ from .store import get_session
 from .logging_setup import get_logger
 from .render_issue import render_issue_pdf
 
+from .emailer import render_html, send_email
+from .config import EMAIL_TO
+
+
 logger = get_logger("quantum_daily.workflow")
 
 TOP_N = 12  # number of items to include in the daily issue
@@ -229,6 +233,25 @@ def run_daily() -> Dict[str, Any]:
                 )
             except Exception as e:
                 logger.exception("PERSIST_ISSUE_FAILED", extra=X(step="persist_issue", handled=True, date=date, error=type(e).__name__))
+            
+            # --- Email Issue ---
+            t_email = time.perf_counter()
+            try:
+                html = render_html(date, issue_items)
+                send_email(f"Quantum Daily — {date}", html)
+                logger.info(
+                    "EMAIL_SENT",
+                    extra=X(
+                        step="email",
+                        to=(prefs.email or EMAIL_TO or "unset"),
+                        elapsed_ms=round((time.perf_counter() - t_email) * 1000),
+                    ),
+                )
+            except Exception as e:
+                logger.exception(
+                    "EMAIL_FAILED",
+                    extra=X(step="email", handled=True, error=type(e).__name__),
+                )
 
             # --- Generate & Save PDF (overwrite each run) ---
             t_pdf = time.perf_counter()
