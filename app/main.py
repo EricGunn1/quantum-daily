@@ -15,6 +15,7 @@ from .exception_handling import register_exception_handlers
 from .lifespan import lifespan
 
 from .routers import health, summary, feedback, prefs
+from .routers.email_admin import router as email_admin_router
 
 # app/main.py
 import sys, asyncio  # add these
@@ -51,3 +52,4 @@ app.include_router(health.router)
 app.include_router(summary.router)
 app.include_router(feedback.router)
 app.include_router(prefs.router)
+app.include_router(email_admin_router)
