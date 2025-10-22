@@ -11,6 +11,58 @@ from ..models import DailyIssue
 from ..workflow import run_daily
 from ..render_issue import render_issue_html, render_issue_pdf
 
+# --- add near the top of summary.py (after imports) ---
+PAGE_CSS = """
+body{font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:24px;}
+h1{margin:0 0 12px;}
+.card{border:1px solid #e5e7eb;border-radius:12px;padding:14px;margin:12px 0;}
+.meta{color:#6b7280;font-size:12px;margin-top:4px}
+.btnbar{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
+.btn{border:1px solid #d1d5db;border-radius:8px;padding:4px 8px;text-decoration:none;cursor:pointer;background:#fff;}
+.btn:hover{background:#f3f4f6}
+.toast{position:fixed;right:16px;bottom:16px;background:#111827;color:#fff;padding:10px 12px;border-radius:8px;opacity:0;transition:opacity .2s}
+.toast.show{opacity:0.92}
+hr{border:none;border-top:1px solid #eee;margin:16px 0}
+small.code{font-family:ui-monospace, SFMono-Regular, Menlo, monospace;color:#6b7280}
+"""
+
+PAGE_JS = """
+async function sendFB(articleId, signal, aspect){
+  try{
+    const res = await fetch('/feedback', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({article_id: articleId, signal, aspect})
+    });
+    const ok = res.ok;
+    const data = await res.json().catch(()=>({}));
+    showToast(ok ? 'Feedback saved' : ('Error: ' + (data.detail || res.status)));
+    // Optionally refresh the prefs readout after a successful save
+    if(ok) loadPrefs();
+  }catch(e){
+    showToast('Network error');
+  }
+}
+let toast;
+function showToast(msg){
+  if(!toast){ toast = document.querySelector('.toast'); }
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(()=>toast.classList.remove('show'), 1400);
+}
+async function loadPrefs(){
+  try{
+    const r = await fetch('/prefs'); if(!r.ok) return;
+    const p = await r.json();
+    const s = `industry_weight=${(p.industry_weight||0).toFixed(2)} · tech_weight=${(p.tech_weight||0).toFixed(2)}`;
+    document.getElementById('prefs').textContent = s;
+  }catch{}
+}
+"""
+
+def _esc(s: str) -> str:
+    return (s or "").replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+
 logger = get_logger("quantum_daily.routes.summary")
 router = APIRouter(prefix="/summary")
 
@@ -78,3 +130,66 @@ def get_today_pdf(regen: bool = Query(False, description="Force rebuild & save P
     filename = f"QuantumDaily-{today}.pdf"
     # If download=false, most browsers will still display inline; Gmail will show it as an attachment either way
     return FileResponse(PDF_OUTPUT_PATH, media_type="application/pdf", filename=filename)
+
+# --- add this new route at the bottom of summary.py ---
+@router.get("/today_interactive.html", response_class=HTMLResponse)
+def get_today_interactive_html(regen: bool = Query(False, description="Force rebuild for today")):
+    """
+    Render today's issue with interactive feedback buttons that POST to /feedback.
+    """
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    with get_session() as s:
+        issue = s.exec(select(DailyIssue).where(DailyIssue.date == today)).first()
+        issue_json = run_daily() if (regen or not issue) else issue.items_json
+
+    items = issue_json.get("items", [])
+    date = issue_json.get("date", today)
+
+    def render_item(it):
+        aid = it.get("id") or 0
+        title = _esc(it.get("title") or "")
+        url = it.get("url") or "#"
+        source = _esc(it.get("source") or "Unknown")
+        cat = _esc(it.get("category") or "—")
+        pub = _esc(str(it.get("published_at") or ""))
+        summ = _esc(it.get("summary") or (it.get("content") or "")[:280])
+        score = it.get("score")
+        score_str = f"{score:.3f}" if isinstance(score,(int,float)) else "—"
+
+        return f"""
+        <div class='card'>
+          <div style='font-weight:600;font-size:16px'>
+            <a href="{url}" target="_blank" rel="noopener">{title}</a>
+          </div>
+          <div class='meta'>{cat} • {source} • {pub} • score <small>{score_str}</small></div>
+          <p style='margin:8px 0 0'>{summ}</p>
+          <div class='btnbar'>
+            <button class='btn' onclick="sendFB({aid}, 'more', 'industry')">More industry</button>
+            <button class='btn' onclick="sendFB({aid}, 'less', 'industry')">Less industry</button>
+            <button class='btn' onclick="sendFB({aid}, 'more', 'tech')">More tech</button>
+            <button class='btn' onclick="sendFB({aid}, 'less', 'tech')">Less tech</button>
+          </div>
+        </div>
+        """
+
+    items_html = "\n".join(render_item(it) for it in items) or "<p>No items.</p>"
+
+    page = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Quantum Daily — {date}</title>
+<style>{PAGE_CSS}</style>
+</head>
+<body>
+  <h1>Quantum Daily — {date}</h1>
+  <div id="prefs" class="meta">Loading preferences…</div>
+  <div class='meta'><small class='code'>Buttons call: POST /feedback</small></div>
+  <hr/>
+  {items_html}
+  <div class='toast'></div>
+<script>{PAGE_JS}</script>
+<script>loadPrefs();</script>
+</body>
+</html>"""
+    return HTMLResponse(page)

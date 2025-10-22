@@ -45,7 +45,7 @@ def favicon():
 @app.get("/", include_in_schema=False)
 def root():
     # Use 307 so GET stays a GET
-    return RedirectResponse(url="/summary/today.html", status_code=307)
+    return RedirectResponse(url="/summary/today_interactive.html", status_code=307)
 
 # Include routers
 app.include_router(health.router)
