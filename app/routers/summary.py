@@ -26,11 +26,17 @@ h1{margin:0 0 12px;}
 .toast.show{opacity:0.92}
 hr{border:none;border-top:1px solid #eee;margin:16px 0}
 small.code{font-family:ui-monospace, SFMono-Regular, Menlo, monospace;color:#6b7280}
+.btn:disabled{opacity:.55; cursor:default}
+.btn.active{background:#eef2ff; border-color:#6366f1}  /* pressed glow */
 """
 
 PAGE_JS = """
-async function sendFB(articleId, signal, aspect){
+let CURRENT_PREFS = null;
+let toast;
+
+async function sendFB(articleId, signal, aspect, el){
   try{
+    if(el){ el.disabled = true; el.classList.add('active'); }
     const res = await fetch('/feedback', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -39,28 +45,68 @@ async function sendFB(articleId, signal, aspect){
     const ok = res.ok;
     const data = await res.json().catch(()=>({}));
     showToast(ok ? 'Feedback saved' : ('Error: ' + (data.detail || res.status)));
-    // Optionally refresh the prefs readout after a successful save
-    if(ok) loadPrefs();
+    if(ok){
+      await loadPrefs();            // refresh global weights display
+      flashSaved(el);
+    }else{
+      if(el){ el.disabled = false; el.classList.remove('active'); }
+    }
   }catch(e){
     showToast('Network error');
+    if(el){ el.disabled = false; el.classList.remove('active'); }
   }
 }
-let toast;
+
+function flashSaved(el){
+  if(!el) return;
+  const orig = el.textContent;
+  el.textContent = 'Saved';
+  setTimeout(()=>{
+    el.textContent = orig;
+    el.disabled = false;
+    el.classList.remove('active');
+  }, 800);
+}
+
 function showToast(msg){
   if(!toast){ toast = document.querySelector('.toast'); }
   toast.textContent = msg;
   toast.classList.add('show');
-  setTimeout(()=>toast.classList.remove('show'), 1400);
+  setTimeout(()=>toast.classList.remove('show'), 1200);
 }
+
 async function loadPrefs(){
   try{
     const r = await fetch('/prefs'); if(!r.ok) return;
     const p = await r.json();
+    CURRENT_PREFS = p;
     const s = `industry_weight=${(p.industry_weight||0).toFixed(2)} · tech_weight=${(p.tech_weight||0).toFixed(2)}`;
-    document.getElementById('prefs').textContent = s;
+    const el = document.getElementById('prefs'); if(el) el.textContent = s;
   }catch{}
 }
+
+/* Overall "good balance":
+   - If industry dominates, nudge 'less industry'
+   - If tech dominates, nudge 'less tech'
+   - If already close, do nothing but acknowledge.
+*/
+function nudgeBalance(el){
+  if(!CURRENT_PREFS){ showToast('Prefs not loaded'); return; }
+  const iw = CURRENT_PREFS.industry_weight || 0;
+  const tw = CURRENT_PREFS.tech_weight || 0;
+  if (Math.abs(iw - tw) < 0.02){  // already balanced within 2%
+    showToast('Already balanced');
+    flashSaved(el);
+    return;
+  }
+  if (iw > tw){
+    sendFB(0, 'less', 'industry', el);
+  } else {
+    sendFB(0, 'less', 'tech', el);
+  }
+}
 """
+
 
 def _esc(s: str) -> str:
     return (s or "").replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
@@ -213,9 +259,9 @@ def get_today_interactive_html(regen: bool = Query(False, description="Force reb
           <p style='margin:8px 0 0'>{summ}</p>
           <div class='btnbar'>
             <button class='btn' style="border-color:#10b981"
-                    title='thumbs up' onclick="sendFB({aid}, '+1', 'source:{source}')">👍</button>
+                    title='thumbs up' onclick="sendFB({aid}, '+1', 'source:{source}', this)">👍</button>
             <button class='btn' style="border-color:#ef4444"
-                    title='thumbs down' onclick="sendFB({aid}, '-1', 'source:{source}')">👎</button>
+                    title='thumbs down' onclick="sendFB({aid}, '-1', 'source:{source}', this)">👎</button>
           </div>
         </div>
         """
@@ -240,6 +286,7 @@ def get_today_interactive_html(regen: bool = Query(False, description="Force reb
     <div class="btnbar" style="margin-top:10px">
       <button class="btn" onclick="sendFB(0, 'less', 'industry')">Overall: too industry</button>
       <button class="btn" onclick="sendFB(0, 'less', 'tech')">Overall: too tech</button>
+      <button class="btn" onclick="nudgeBalance(this)">Overall: good balance</button>
     </div>
     <div class="meta"><small class='code'>These buttons call POST /feedback</small></div>
   </div>
